@@ -89,8 +89,27 @@ const iframeStyles = () => {
   iframe.value.contentDocument?.body.setAttribute('style', concentrated)
 }
 
-const markAsReady = () => {
+const markAsReady = async () => {
   if (!iframe.value) return
+
+  if (props.app.onUse || props.app.onUseServer) {
+    await useApi<null>(
+      'appOpened',
+      {
+        method: 'POST',
+        body: JSON.stringify({ id: props.app.id })
+      },
+      undefined,
+      null
+    )
+  }
+
+  childComponentsLoaded()
+
+  postMessage({
+    action: 'onOpen',
+    data: {}
+  })
 
   props.appReady()
   iframeStyles()
@@ -100,7 +119,6 @@ const iframeEvents = () => {
   if (!iframe.value) return
 
   const childEvents: Record<string, (data?: any) => void> = {
-    parentReady: () => childComponentsLoaded(),
     appReady: () => markAsReady(),
     changeWindowTitle: (newTitle: string) => props.changeWindowTitle(newTitle),
     getAppData: () => getAppData(),
@@ -128,23 +146,94 @@ const iframeEvents = () => {
 const iframeBindings = () => {
   if (!iframe.value) return
 
-  const body = iframe.value.contentWindow?.document.body
+  const body = iframe.value.contentWindow?.document.head
   if (!body) return
 
-  const globalDefinition = body?.appendChild(document.createElement('script'))
+  if (props.app.overrides && Array.isArray(props.app.overrides)) {
+    props.app.overrides.forEach((override) => {
+      const script = document.createElement('script')
+      script.setAttribute('src', override)
+      body.prepend(script)
+    })
+  }
+
+  const globalScript = document.createElement('script')
+  globalScript?.setAttribute('src', `https://cfx-nui-${parentResourceName}/web/dist/global.js`)
+  body?.prepend(globalScript)
+
+  const globalDefinition = document.createElement('script')
   globalDefinition.appendChild(
     document.createTextNode(`
         globalThis.resourceName = '${props.app.resourceName}'
         globalThis.appId = '${props.app.id}'
     `)
   )
+  body?.prepend(globalDefinition)
+}
 
-  const globalScript = body?.appendChild(document.createElement('script'))
-  globalScript?.setAttribute('src', `https://cfx-nui-${parentResourceName}/web/dist/global.js`)
+const awaitForContent = () => {
+  if (!iframe.value) return
+
+  try {
+    iframe.value!.contentWindow?.postMessage(
+      {
+        action: 'showMenu'
+      },
+      '*'
+    )
+
+    const iframeDoc = iframe.value.contentDocument || iframe.value.contentWindow!.document
+
+    const observer = new MutationObserver(async (mutations) => {
+      let hasContent = false
+      mutations.forEach((mutation) => {
+        if (mutation.addedNodes.length > 0) {
+          hasContent = true
+        }
+      })
+
+      if (hasContent) {
+        markAsReady()
+
+        observer.disconnect()
+      }
+    })
+
+    observer.observe(iframeDoc.body, {
+      childList: true,
+      subtree: true
+    })
+  } catch (e) {
+    console.error('Error while loading external app:', e)
+  }
+}
+
+const awaitForAlpineToLoad = () => {
+  if (!iframe.value) return
+
+  const checkAlpine = () => {
+    //@ts-ignore
+    if (iframe.value!.contentWindow?.Alpine) {
+      markAsReady()
+      return
+    }
+
+    setTimeout(checkAlpine, 100)
+  }
+
+  checkAlpine()
 }
 
 const iframeLoaded = () => {
   if (!iframe.value) return
+
+  if (props.app.ui.includes('rahe-') || props.app.ui.includes('kub-') || props.app.isAlpine) {
+    awaitForAlpineToLoad()
+  } else if (props.app.isReactOrVue) {
+    awaitForContent()
+  } else {
+    setTimeout(markAsReady, 1000)
+  }
 
   iframeEvents()
   iframeBindings()
@@ -171,9 +260,9 @@ const kubOverrides = (show: boolean = true) => {
   if (show) {
     const body = iframe.value!.contentWindow?.document.body!
 
-    body.firstElementChild?.setAttribute(
+    body.lastElementChild?.setAttribute(
       'style',
-      'position:relative; margin: 0; left: 0; top: 0; width: 100%; height: 100%; max-height: auto; max-width: auto; transform: none;'
+      'position:relative; margin: 0; left: 0; top: 0; width: 100vw; height: 100vh; max-height: auto; max-width: auto; transform: none;'
     )
 
     const head = iframe.value!.contentWindow?.document.head!
@@ -232,18 +321,6 @@ onMounted(async () => {
     )
   })
 
-  if (props.app.onUse || props.app.onUseServer) {
-    await useApi<null>(
-      'appOpened',
-      {
-        method: 'POST',
-        body: JSON.stringify({ id: props.app.id })
-      },
-      undefined,
-      null
-    )
-  }
-
   onKeyUp(
     'Escape',
     () => {
@@ -271,6 +348,10 @@ onBeforeUnmount(async () => {
   if (props.app.ui.includes('kub-')) {
     kubOverrides(false)
   }
+
+  postMessage({
+    action: 'closeApp'
+  })
 
   if (props.app.onClose || props.app.onCloseServer) {
     await useApi<null>(

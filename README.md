@@ -30,9 +30,6 @@ Make sure that did download the release version, and not the source code since i
 
 Minimal support will be given in our discord server. [Felis Development](https://discord.gg/F8SUWwAsDN)
 
-## Recommended resources to use
-- [Nexure Racing](https://nexure.dev/product/6507811) - Elevate your FiveM racing experience with the Nexure Racing Script, a robust, feature-rich solution designed for competitive racing and community engagement.
-
 ## Credits
 
 - [overextended](https://github.com/overextended/ox_lib) - For overall wonderful library and code snippets used in this resource, and building workflow.
